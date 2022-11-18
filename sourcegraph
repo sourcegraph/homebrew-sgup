@@ -5,7 +5,7 @@
 # Files related to this tool are stored at this path: /tmp/homebrew-sourcegraph
 # VARIABLES
 ###############################################################################
-SGBREW_VERSION="v0.0.0"
+SGBREW_VERSION="v0.0.1"
 SGBREW_URL_DOCKER=http://localhost:7080/
 SGBREW_URL_DOCKERCOMPOSE=http://localhost/
 SGBREW_URL_LIMA=http://localhost/
@@ -35,9 +35,9 @@ USAGE:  sourcegraph COMMAND [<ARGS>]
 
 EXAMPLES:
 To launch a local k3s Sourcegraph Instance, run:
-    $ sourcegraph launch k3s
+    $ sourcegraph start k3s
 To set up a docker Sourcegraph Instance, run:
-    $ sourcegraph launch docker
+    $ sourcegraph start docker
 
 COMMAND:
     cloud           Open sourcegraph.com in your browser
@@ -58,7 +58,7 @@ EOF
 ###############################################################################
 # HELPER FUNCTIONS
 ###############################################################################
-spining() {
+spinning() {
     pid=$! # Process Id of the running process
     spin='-\|/'
     i=0
@@ -77,10 +77,12 @@ start_docker() {
     if docker ps | grep -q CONTAINER; then
         echo "[Sourcegraph] Deploying Sourcegraph to Docker"
         SGBREW_DOCKER_VERSION=${SG_LATEST_VERSION#v} #remove v
-        docker run --platform linux/amd64 -d --publish 7080:7080 --publish 127.0.0.1:3370:3370 --rm --volume ~/.sourcegraph/config:/etc/sourcegraph --volume ~/.sourcegraph/data:/var/opt/sourcegraph sourcegraph/server:"$SGBREW_DOCKER_VERSION" >/dev/null 2>&1 &
-        spining
+        docker run --platform linux/amd64 --name sg-brew -d --publish 7080:7080 --publish 127.0.0.1:3370:3370 --rm --volume ~/.sourcegraph/config:/etc/sourcegraph --volume ~/.sourcegraph/data:/var/opt/sourcegraph sourcegraph/server:"$SGBREW_DOCKER_VERSION" >/dev/null 2>&1 &
+        spinning
     else
-        echo "[Sourcegraph] Cannot launch instance without Docker Desktop installed and running on your machine." && exit 1
+        echo "[Sourcegraph] Cannot launch instance without Docker Desktop installed and running on your machine."
+        echo "[Sourcegraph] Try to run this command again when Docker Desktop is up and running"
+        exit 1
     fi
 }
 # Command to set up a docker compose instance
@@ -98,7 +100,7 @@ start_docker_compose() {
         git pull origin "$SG_LATEST_VERSION"
         git checkout "$SG_LATEST_VERSION"
         docker-compose -f /tmp/homebrew-sourcegraph/deploy-sourcegraph-docker/docker-compose/docker-compose.yaml up -d >/dev/null 2>&1 &
-        spining
+        spinning
         sleep 30
     else
         echo "[Sourcegraph] Cannot launch instance without Docker Desktop installed and running on your machine." && exit 1
@@ -114,10 +116,10 @@ start_mp() {
     else
         echo "[Sourcegraph] Setting up a Sourcegraph instance in multipass..."
         multipass launch --name sg --cpus 8 --mem 32G --disk 50G >/dev/null 2>&1 &
-        spining
+        spinning
         sleep 5 && echo "[Sourcegraph] Deploying Sourcegraph to VM..."
         multipass exec sg -- bash -c "curl -sfL $SGBREW_LOCAL_SCRIPT_URL | bash -s -" 1>/dev/null &
-        spining
+        spinning
         echo "[Sourcegraph] Your new Sourcegraph $SGBREW_DEPLOY_MODE instance is being set up in the background..."
         echo "[Sourcegraph] It might take a few minutes."
         sleep 60
@@ -139,10 +141,10 @@ start_lima() {
         fi
         echo "[Sourcegraph] Setting up a lima VM..."
         limactl start --name=sg --tty=false >/dev/null 2>&1 &
-        spining
+        spinning
         sleep 5 && echo "[Sourcegraph] Deploying Sourcegraph to VM..."
         limactl shell sg bash -c "curl -sfL $SGBREW_LOCAL_SCRIPT_URL | bash -s -" >/dev/null 2>&1 &
-        spining
+        spinning
         echo "[Sourcegraph] Your new Sourcegraph $SGBREW_DEPLOY_MODE instance is being set up in the background."
         echo "[Sourcegraph] It might take a few minutes."
         sleep 60
@@ -161,7 +163,7 @@ getUrl_multipass() {
                 sleep 30
             fi
         done &
-        spining
+        spinning
         echo "[Sourcegraph] Connection time out." && exit 1
     else
         echo "[Sourcegraph] Cannot find or connect to any running instance." && exit 1
@@ -178,7 +180,7 @@ getUrl_lima() {
                 sleep 30
             fi
         done &
-        spining
+        spinning
         echo "[Sourcegraph] Connection time out." && exit 1
     else
         echo "[Sourcegraph] Cannot find or connect to any running instance." && exit 1
@@ -186,7 +188,7 @@ getUrl_lima() {
 }
 getUrl_docker() {
     RETRY_COUNT_DOCKER=0
-    while [ $RETRY_COUNT_DOCKER -le 10 ]; do
+    while [ $RETRY_COUNT_DOCKER -le 20 ]; do
         if docker ps | grep sourcegraph | grep -q Up; then
             # Open Sourcegraph in browser if the curl response is 30X Found
             curl -Is $SGBREW_URL_DOCKER | head -n 1 | grep -q "30" && sleep 5 && open $SGBREW_URL_DOCKER && exit 0
@@ -194,7 +196,7 @@ getUrl_docker() {
         ((RETRY_COUNT_DOCKER++))
         sleep 30
     done &
-    spining
+    spinning
     echo "[Sourcegraph] Connection time out. Failed to find or connect to any running instance." && exit 1
 }
 getUrl_docker_compose() {
@@ -216,15 +218,19 @@ done
 # COMMANDS
 case $1 in
 cloud | dotcom)
-    echo "[Sourcegraph] ✅ Opening sourcegraph cloud in your browswer."
+    echo "[Sourcegraph] Opening sourcegraph.com in your browswer."
     open https://www.sourcegraph.com
     ;;
 delete)
     echo "[Sourcegraph] Trying to find a running instance to remove"
     case $2 in
+    docke | d)
+        docker stop sg-brew 1>/dev/null &
+        spinning
+        ;;
     docker-compose | dc)
         cd /tmp/homebrew-sourcegraph/deploy-sourcegraph-docker/docker-compose/ && docker-compose down >/dev/null 2>&1 &
-        spining
+        spinning
         ;;
     k3s | k)
         [ $SGBREW_ARCH = 'multipass' ] && multipass delete sg --purge
@@ -236,7 +242,7 @@ delete)
 doctor)
     echo "[Sourcegraph] Health check tool - coming soon!"
     ;;
-start)
+start | launch | run)
     case $2 in
     docker | d) start_docker && getUrl_docker ;;
     docker-compose | dc) start_docker_compose && getUrl_docker_compose ;;
@@ -265,11 +271,11 @@ open)
     echo "[Sourcegraph] Connect to the instance..."
     echo "[Sourcegraph] We will redirect you to your browser once we can connect to the instance"
     [ "$2" = "k3s" ] && [ $SGBREW_ARCH = 'multipass' ] && getUrl_multipass &
-    spining && exit 0
+    spinning && exit 0
     [ "$2" = "k3s" ] && [ $SGBREW_ARCH = 'lima' ] && getUrl_lima &
-    spining && exit 0
+    spinning && exit 0
     [ "$2" = 'docker' ] && getUrl_docker &
-    spining && exit 0
+    spinning && exit 0
     [ "$2" = 'docker-compose' ] && getUrl_docker_compose && exit 0
     [ "$2" = "doc" ] && open https://docs.sourcegraph.com/ && exit 0
     [ "$2" = "cloud" ] && open https://sourcegraph.com/ && exit 0
