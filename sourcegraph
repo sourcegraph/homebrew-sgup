@@ -5,7 +5,7 @@
 # Files related to this tool are stored at this path: /tmp/homebrew-sourcegraph
 # VARIABLES
 ###############################################################################
-SGBREW_VERSION="v0.0.1"
+SGBREW_VERSION="v0.0.2"
 SGBREW_URL_DOCKER=http://localhost:7080/
 SGBREW_URL_DOCKERCOMPOSE=http://localhost/
 SGBREW_URL_LIMA=http://localhost/
