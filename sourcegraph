@@ -29,30 +29,40 @@ SG_LATEST_VERSION=$(curl -s https://api.github.com/repos/sourcegraph/sourcegraph
 ###############################################################################
 read -r -d '' SGBREW_HOME <<'EOF'
 
-sourcegraph: a tool to set up a local Sourcegraph instance easily.
+sourcegraph: a tool that allows you to set a local Sourcegraph instance from your CLI
 
 USAGE:  sourcegraph COMMAND [<ARGS>] 
 
 EXAMPLES:
-To launch a local k3s Sourcegraph Instance, run:
-    $ sourcegraph start k3s
-To set up a docker Sourcegraph Instance, run:
+To start a Sourcegraph docker instance locally:
     $ sourcegraph start docker
+To check the health status for the instance:
+    $ sourcegraph status docker
+To delete the instance:
+    $ sourcegraph delete docker
 
 COMMAND:
     cloud           Open sourcegraph.com in your browser
     delete          Delete and purge running sourcegraph instance
+                    ARGS: docker, docker-compose, k3s
     doctor          Coming soon: Health check tool
     install         Install dependencies
-    start           Launch a local Sourcegraph instance
-                    ARGS: k3s, docker, docker-compose
+    start           Launch a local Sourcegraph instance (docker by default)
+                    ARGS: docker, docker-compose, k3s
     list            List info on your currently running instance
     open            Open the running Sourcegraph instance in browser (if it's ready)
+                    ARGS: cloud, docker, docker-compose, docs, k3s
     shell           Open interactive shell for your Sourcegraph instance
+                    ARGS: docker, docker-compose, k3s
     status          Check instance status, e.g kubectl get pods -A
+                    ARGS: docker, docker-compose, k3s
     watch           Watch instance deployment status, e.g kubectl get pods -A -w
+                    ARGS: docker, docker-compose, k3s
     version         Current version number
 
+PREREQUISITES:
+1. Docker Desktop must be installed on your machine to start a Sourcegraph instance with docker or docker compose
+2. Starting a Sourcegraph k3s instance requires at least 8 CPU and 30GB Ram available on your local machine to run properly
 EOF
 
 ###############################################################################
@@ -71,57 +81,61 @@ spinning() {
 # Command to set up a docker instance
 start_docker() {
     SGBREW_DEPLOY_MODE=docker
-    echo "[Sourcegraph] A new Sourcegraph instance will be started in a Docker container"
-    echo "[Sourcegraph] Checking requirements... Docker Desktop will be started in the background if it is available."
+    echo "[sourcegraph] A new Sourcegraph instance will be started in a Docker container"
+    echo "[sourcegraph] Checking requirements... Docker Desktop will be started in the background if it is available."
     open -g -j -a /Applications/Docker.app && sleep 15
+    docker ps | grep -q sg-brew && echo "Sourcegraph is already running"
     if docker ps | grep -q CONTAINER; then
-        echo "[Sourcegraph] Deploying Sourcegraph to Docker"
+        echo "[sourcegraph] Deploying Sourcegraph to a docker container named sg-brew"
         SGBREW_DOCKER_VERSION=${SG_LATEST_VERSION#v} #remove v
-        docker run --platform linux/amd64 --name sg-brew -d --publish 7080:7080 --publish 127.0.0.1:3370:3370 --rm --volume ~/.sourcegraph/config:/etc/sourcegraph --volume ~/.sourcegraph/data:/var/opt/sourcegraph sourcegraph/server:"$SGBREW_DOCKER_VERSION" >/dev/null 2>&1 &
+        docker run --platform linux/amd64 --name sg-brew -d --publish 7080:7080 --publish 127.0.0.1:3370:3370 --rm --volume /tmp/homebrew-sourcegraph/.sourcegraph/config:/etc/sourcegraph --volume /tmp/homebrew-sourcegraph/.sourcegraph/data:/var/opt/sourcegraph sourcegraph/server:"$SGBREW_DOCKER_VERSION" >/dev/null 2>&1 &
         spinning
     else
-        echo "[Sourcegraph] Cannot launch instance without Docker Desktop installed and running on your machine."
-        echo "[Sourcegraph] Try to run this command again when Docker Desktop is up and running"
+        echo "[sourcegraph] Cannot launch instance without Docker Desktop installed and running on your machine."
+        echo "[sourcegraph] Try to run this command again when Docker Desktop is up and running"
         exit 1
     fi
 }
 # Command to set up a docker compose instance
 start_docker_compose() {
     SGBREW_DEPLOY_MODE=docker-compose
-    echo "[Sourcegraph] Checking requirements..."
-    echo "[Sourcegraph] Checking requirements... Docker Desktop will be started in the background if it is available."
+    echo "[sourcegraph] Checking requirements..."
+    echo "[sourcegraph] Checking requirements... Docker Desktop will be started in the background if it is available."
     open -g -j -a /Applications/Docker.app && sleep 15
+    docker ps | grep -q sg-brew || docker ps | grep sourcegraph-frontend-0 | grep -q Up && echo "Sourcegraph is already running"
     if docker ps | grep -q CONTAINER; then
-        echo "[Sourcegraph] Starting docker"
+        echo "[sourcegraph] Starting docker"
         if [ ! -f /tmp/homebrew-sourcegraph/deploy-sourcegraph-docker ]; then
-            git clone --branch "$SG_LATEST_VERSION" -q https://github.com/sourcegraph/deploy-sourcegraph-docker.git /tmp/homebrew-sourcegraph/deploy-sourcegraph-docker
+            git clone -q https://github.com/sourcegraph/deploy-sourcegraph-docker.git /tmp/homebrew-sourcegraph/deploy-sourcegraph-docker
+            cd /tmp/homebrew-sourcegraph/deploy-sourcegraph-docker || exit
+            git checkout -q "$SG_LATEST_VERSION" >/dev/null 2>&1 &
             cd || exit
         fi
-        git pull origin "$SG_LATEST_VERSION"
-        git checkout "$SG_LATEST_VERSION"
+        git pull -q
+        git checkout -q "$SG_LATEST_VERSION"
         docker-compose -f /tmp/homebrew-sourcegraph/deploy-sourcegraph-docker/docker-compose/docker-compose.yaml up -d >/dev/null 2>&1 &
         spinning
         sleep 30
     else
-        echo "[Sourcegraph] Cannot launch instance without Docker Desktop installed and running on your machine." && exit 1
+        echo "[sourcegraph] Cannot launch instance without Docker Desktop installed and running on your machine." && exit 1
     fi
 }
 # Command to set up a k3s instance on non-Arm machines using multipass
 start_mp() {
     SGBREW_DEPLOY_MODE=k3s
     if ! command -v multipass >/dev/null; then
-        echo "[Sourcegraph] Cannot launch instance without Multipass running on your machine."
-        echo "[Sourcegraph] Install multipass: brew install --cask multipass"
+        echo "[sourcegraph] Cannot launch instance without Multipass running on your machine."
+        echo "[sourcegraph] Install multipass: brew install --cask multipass"
         exit 1
     else
-        echo "[Sourcegraph] Setting up a Sourcegraph instance in multipass..."
+        echo "[sourcegraph] Setting up a Sourcegraph instance in multipass..."
         multipass launch --name sg --cpus 8 --mem 32G --disk 50G >/dev/null 2>&1 &
         spinning
-        sleep 5 && echo "[Sourcegraph] Deploying Sourcegraph to VM..."
+        sleep 5 && echo "[sourcegraph] Deploying Sourcegraph to VM..."
         multipass exec sg -- bash -c "curl -sfL $SGBREW_LOCAL_SCRIPT_URL | bash -s -" 1>/dev/null &
         spinning
-        echo "[Sourcegraph] Your new Sourcegraph $SGBREW_DEPLOY_MODE instance is being set up in the background..."
-        echo "[Sourcegraph] It might take a few minutes."
+        echo "[sourcegraph] Your new Sourcegraph $SGBREW_DEPLOY_MODE instance is being set up in the background..."
+        echo "[sourcegraph] It might take a few minutes."
         sleep 60
     fi
 }
@@ -129,24 +143,24 @@ start_mp() {
 start_lima() {
     SGBREW_DEPLOY_MODE=k3s
     if ! command -v limactl >/dev/null; then
-        echo "[Sourcegraph] Cannot launch instance without Lima VM installed and running on your machine."
-        echo "[Sourcegraph] Install lima: brew install lima"
+        echo "[sourcegraph] Cannot launch instance without Lima VM installed and running on your machine."
+        echo "[sourcegraph] Install lima: brew install lima"
         exit 1
     else
-        echo "[Sourcegraph] Setting up a Sourcegraph instance in lima VM"
+        echo "[sourcegraph] Setting up a Sourcegraph instance in lima VM"
         if [ ! -f "$HOME"/.lima/sg/lima.yaml ]; then
-            echo "[Sourcegraph] Installing configuration file for lima VM"
+            echo "[sourcegraph] Installing configuration file for lima VM"
             mkdir -p "$HOME"/.lima/sg
             curl -o "$HOME"/.lima/sg/lima.yaml https://raw.githubusercontent.com/sourcegraph/homebrew-sourcegraph/main/configs/lima.yaml
         fi
-        echo "[Sourcegraph] Setting up a lima VM..."
+        echo "[sourcegraph] Setting up a lima VM..."
         limactl start --name=sg --tty=false >/dev/null 2>&1 &
         spinning
-        sleep 5 && echo "[Sourcegraph] Deploying Sourcegraph to VM..."
+        sleep 5 && echo "[sourcegraph] Deploying Sourcegraph to VM..."
         limactl shell sg bash -c "curl -sfL $SGBREW_LOCAL_SCRIPT_URL | bash -s -" >/dev/null 2>&1 &
         spinning
-        echo "[Sourcegraph] Your new Sourcegraph $SGBREW_DEPLOY_MODE instance is being set up in the background."
-        echo "[Sourcegraph] It might take a few minutes."
+        echo "[sourcegraph] Your new Sourcegraph $SGBREW_DEPLOY_MODE instance is being set up in the background."
+        echo "[sourcegraph] It might take a few minutes."
         sleep 60
     fi
 }
@@ -160,13 +174,13 @@ getUrl_multipass() {
                 open http://"$SGBREW_URL_MULTIPASS" && exit 0
             else
                 ((RETRY_COUNT_MP++))
+                [ "$RETRY_COUNT_MP" -eq 19 ] && echo "[sourcegraph] Connection time out. Run 'sourcegraph status k3s' to see if the instance is still being set up." && exit 1
                 sleep 30
             fi
         done &
-        spinning
-        echo "[Sourcegraph] Connection time out." && exit 1
+        spinning && echo "[sourcegraph] Connection time out." && exit 1
     else
-        echo "[Sourcegraph] Cannot find or connect to any running instance." && exit 1
+        echo "[sourcegraph] Cannot find or connect to any running instance." && exit 1
     fi
 }
 getUrl_lima() {
@@ -177,13 +191,13 @@ getUrl_lima() {
                 open $SGBREW_URL_LIMA && exit 0
             else
                 ((RETRY_COUNT_LIMA++))
+                [ "$RETRY_COUNT_LIMA" -eq 19 ] && echo "[sourcegraph] Connection time out. Run 'sourcegraph status k3s' to see if the instance is still being set up." && exit 1
                 sleep 30
             fi
         done &
         spinning
-        echo "[Sourcegraph] Connection time out." && exit 1
     else
-        echo "[Sourcegraph] Cannot find or connect to any running instance." && exit 1
+        echo "[sourcegraph] Cannot find or connect to any running instance." && exit 1
     fi
 }
 getUrl_docker() {
@@ -194,14 +208,13 @@ getUrl_docker() {
             curl -Is $SGBREW_URL_DOCKER | head -n 1 | grep -q "30" && sleep 5 && open $SGBREW_URL_DOCKER && exit 0
         fi
         ((RETRY_COUNT_DOCKER++))
+        [ "$RETRY_COUNT_DOCKER" -eq 19 ] && echo "[sourcegraph] Connection time out. Run 'sourcegraph status docker' to see if the instance is still being set up." && exit 1
         sleep 30
     done &
     spinning
-    echo "[Sourcegraph] Connection time out. Failed to find or connect to any running instance." && exit 1
 }
 getUrl_docker_compose() {
     open $SGBREW_URL_DOCKERCOMPOSE && exit 0
-    echo "[Sourcegraph] Connection time out. Failed to find or connect to any running instance." && exit 1
 }
 ###############################################################################
 # MAIN SCRIPT
@@ -209,40 +222,40 @@ getUrl_docker_compose() {
 # FLAGS
 while getopts ":hv" opt; do
     case $opt in
-    h) echo "[Sourcegraph] Help for Sourcegraph UP (sgup)" >&2 && break ;; #Automatically print help
-    v) echo "[Sourcegraph] $SGBREW_VERSION" >&2 && exit 0 ;;
-    \?) echo "[Sourcegraph] Invalid flag: -$OPTARG" >&2 && exit 1 ;;
-    :) echo "[Sourcegraph] -$OPTARG expects an argument." >&2 && exit 1 ;;
+    h) echo "[sourcegraph] Help for Sourcegraph UP (sgup)" >&2 && break ;; #Automatically print help
+    v) echo "[sourcegraph] $SGBREW_VERSION" >&2 && exit 0 ;;
+    \?) echo "[sourcegraph] Invalid flag: -$OPTARG" >&2 && exit 1 ;;
+    :) echo "[sourcegraph] -$OPTARG expects an argument." >&2 && exit 1 ;;
     esac
 done
 # COMMANDS
 case $1 in
 cloud | dotcom)
-    echo "[Sourcegraph] Opening sourcegraph.com in your browswer."
+    echo "[sourcegraph] Opening sourcegraph.com in your browswer."
     open https://www.sourcegraph.com
     ;;
 delete)
-    echo "[Sourcegraph] Trying to find a running instance to remove"
+    echo "[sourcegraph] Trying to find a running instance to remove"
     case $2 in
-    docke | d)
+    docker | d)
         docker stop sg-brew 1>/dev/null &
-        spinning
+        spinning && echo "[sourcegraph] Operation Completed"
         ;;
     docker-compose | dc)
         cd /tmp/homebrew-sourcegraph/deploy-sourcegraph-docker/docker-compose/ && docker-compose down >/dev/null 2>&1 &
-        spinning
+        spinning && echo "[sourcegraph] Operation Completed"
         ;;
     k3s | k)
         [ $SGBREW_ARCH = 'multipass' ] && multipass delete sg --purge
         [ $SGBREW_ARCH = 'lima' ] && limactl stop -f sg && limactl delete sg
         ;;
-    *) echo "[Sourcegraph] You must specify the instance type you want to delete. Ex. sourcegraph delete docker-compose" ;;
+    *) echo "[sourcegraph] You must specify the instance type you want to delete. Ex. sourcegraph delete docker-compose" ;;
     esac
     ;;
 doctor)
-    echo "[Sourcegraph] Health check tool - coming soon!"
+    echo "[sourcegraph] Health check tool - coming soon!"
     ;;
-start | launch | run)
+start | launch | run | s | r | l)
     case $2 in
     docker | d) start_docker && getUrl_docker ;;
     docker-compose | dc) start_docker_compose && getUrl_docker_compose ;;
@@ -250,26 +263,26 @@ start | launch | run)
         [ $SGBREW_ARCH = 'multipass' ] && start_mp && getUrl_multipass
         [ $SGBREW_ARCH = 'lima' ] && start_lima && getUrl_lima
         ;;
-    *) echo "[Sourcegraph] About to deploy with the default deployment type." && start_docker && getUrl_docker ;;
+    *) echo "[sourcegraph] About to deploy with the default deployment type." && start_docker && getUrl_docker ;;
     esac
     ;;
-install)
-    echo "[Sourcegraph] Which deployment types would you like to install dependencies for?"
-    echo "[Sourcegraph] 1) k3s 2) docker 3) docker-compose 4) quit"
-    echo "[Sourcegraph] Enter your answer below. Ex: enter 1 to install dependencies for setting up a k3s instance."
+install | i)
+    echo "[sourcegraph] Which deployment types would you like to install dependencies for?"
+    echo "[sourcegraph] 1) k3s 2) docker 3) docker-compose 4) quit"
+    echo "[sourcegraph] Enter your answer below. Ex: enter 1 to install dependencies for setting up a k3s instance."
     read -r REPLY
-    echo "[Sourcegraph] Installing dependencies for $REPLY"
+    echo "[sourcegraph] Installing dependencies for $REPLY"
     case $REPLY in
     1) [ $SGBREW_ARCH = 'multipass' ] && brew install --cask multipass || [ $SGBREW_ARCH = 'lima' ] && brew install lima ;;
-    2) echo "[Sourcegraph] Installing docker desktop through brew" && brew install --cask docker ;;
-    3) echo "[Sourcegraph] Installing docker compose through brew" && brew install docker-compose ;;
-    4) echo "[Sourcegraph] No dependencies were installed." && exit ;;
-    *) echo "[Sourcegraph] $REPLY is not a valid answer. Only digit is accepted." && exit ;;
+    2) echo "[sourcegraph] Installing docker desktop through brew" && brew install --cask docker ;;
+    3) echo "[sourcegraph] Installing docker compose through brew" && brew install docker-compose ;;
+    4) echo "[sourcegraph] No dependencies were installed." && exit ;;
+    *) echo "[sourcegraph] $REPLY is not a valid answer. Only digit is accepted." && exit ;;
     esac
     ;;
 open)
-    echo "[Sourcegraph] Connect to the instance..."
-    echo "[Sourcegraph] We will redirect you to your browser once we can connect to the instance"
+    echo "[sourcegraph] Connect to the instance..."
+    echo "[sourcegraph] We will redirect you to your browser once we can connect to the instance"
     [ "$2" = "k3s" ] && [ $SGBREW_ARCH = 'multipass' ] && getUrl_multipass &
     spinning && exit 0
     [ "$2" = "k3s" ] && [ $SGBREW_ARCH = 'lima' ] && getUrl_lima &
@@ -280,48 +293,48 @@ open)
     [ "$2" = "doc" ] && open https://docs.sourcegraph.com/ && exit 0
     [ "$2" = "cloud" ] && open https://sourcegraph.com/ && exit 0
     [ "$2" = "dotcom" ] && open https://sourcegraph.com/ && exit 0
-    echo "[Sourcegraph] ERROR: Cannot connect to a local instance." && exit 1
+    echo "[sourcegraph] ERROR: Cannot connect to a local instance." && exit 1
     ;;
 shell)
     if [ "$2" = "k3s" ]; then
-        echo "[Sourcegraph] Connecting to your local k3s instance..."
+        echo "[sourcegraph] Connecting to your local k3s instance..."
         echo "NOTE: Control + D to exit VM"
         [ $SGBREW_ARCH = 'multipass' ] && multipass shell sg
         [ $SGBREW_ARCH = 'lima' ] && limactl shell sg
     else
-        echo "[Sourcegraph] Shell is not available for non-k3s instances." && exit 1
+        echo "[sourcegraph] Shell is not available for non-k3s instances." && exit 1
     fi
     ;;
 status)
-    echo "[Sourcegraph] Connecting to your local instance..."
+    echo "[sourcegraph] Connecting to your local instance..."
     case $2 in
     docker | docker-compose | d | dc) docker ps ;;
     k3s | k)
         [ $SGBREW_ARCH = 'multipass' ] && multipass exec sg -- bash -c "k3s kubectl get pods -A" && exit 0
         [ $SGBREW_ARCH = 'lima' ] && limactl shell sg bash -c "k3s kubectl get pods -A" && exit 0
         ;;
-    *) echo "[Sourcegraph] ERROR: Not a valid instance type. Example: sourcegraph status k3s" ;;
+    *) echo "[sourcegraph] ERROR: Not a valid instance type. Example: sourcegraph status k3s" ;;
     esac
     ;;
-watch)
-    echo "[Sourcegraph] Connecting to your local instance..."
+watch | w)
+    echo "[sourcegraph] Connecting to your local instance..."
     case $2 in
     docker | docker-compose | d | dc) docker ps ;;
     k3s | k)
         [ $SGBREW_ARCH = 'multipass' ] && multipass exec sg -- bash -c "k3s kubectl get pods -A -w"
         [ $SGBREW_ARCH = 'lima' ] && limactl shell sg bash -c "k3s kubectl get pods -A -w"
         ;;
-    *) echo "[Sourcegraph] ERROR: Not a valid instance type. Example: sourcegraph status k3s" ;;
+    *) echo "[sourcegraph] ERROR: Not a valid instance type. Example: sourcegraph status k3s" ;;
     esac
     ;;
-list)
-    echo "[Sourcegraph] Info on your current running Sourcegraph instance:"
+list | ls)
+    echo "[sourcegraph] Info on your current running Sourcegraph instance:"
     case $2 in
     docker | docker-compose | d | dc) docker ps ;;
     k3s | k) [ $SGBREW_ARCH = 'multipass' ] && multipass list || [ $SGBREW_ARCH = 'lima' ] && limactl list ;;
-    *) echo "[Sourcegraph] ERROR: Not a valid instance type. Example: sourcegraph list k3s" ;;
+    *) echo "[sourcegraph] ERROR: Not a valid instance type. Example: sourcegraph list k3s" ;;
     esac
     ;;
-version) echo "$SGBREW_VERSION" ;;
+version | v) echo "$SGBREW_VERSION" ;;
 *) echo "$SGBREW_HOME" ;;
 esac
